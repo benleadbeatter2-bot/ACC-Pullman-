@@ -1,0 +1,54 @@
+name: Check Pullman Khao Lak price
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    # GitHub schedules use UTC.
+    # 00:15 UTC = 08:15 Perth time.
+    - cron: "15 0 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  check-price:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      ACCOR_URL: ${{ vars.ACCOR_URL }}
+      TARGET_PRICE: ${{ vars.TARGET_PRICE }}
+      CURRENCY: ${{ vars.CURRENCY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+    steps:
+      - name: Download repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python packages
+        run: pip install -r requirements.txt
+
+      - name: Install Chromium
+        run: playwright install --with-deps chromium
+
+      - name: Check Accor price
+        run: python tracker.py
+
+      - name: Upload check results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pullman-khao-lak-price-check
+          path: |
+            accor-price-check.png
+            price-result.json
+          if-no-files-found: ignore
+          retention-days: 14
