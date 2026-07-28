@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
 
   schedule:
-    # GitHub cron uses UTC.
-    # 00:15 UTC is 08:15 in Perth.
+    # GitHub Actions uses UTC.
+    # 00:15 UTC is 08:15 Perth time.
     - cron: "15 0 * * *"
 
 permissions:
@@ -17,19 +17,23 @@ jobs:
     timeout-minutes: 20
 
     env:
-      # Blank repository variables automatically use these defaults.
+      # Use the complete Accor booking URL containing
+      # your dates and number of guests.
       ACCOR_URL: ${{ vars.ACCOR_URL || 'https://all.accor.com/hotel/B436/index.en.shtml' }}
-      TARGET_PRICE: ${{ vars.TARGET_PRICE || '0' }}
-      CURRENCY: ${{ vars.CURRENCY || 'AUD' }}
-      EMAIL_MODE: ${{ vars.EMAIL_MODE || 'always' }}
 
-      # Recipient is fixed.
+      # Price range and currency.
+      CURRENCY: ${{ vars.CURRENCY || 'THB' }}
+      MIN_PRICE: ${{ vars.MIN_PRICE || '1300' }}
+      MAX_PRICE: ${{ vars.MAX_PRICE || '1400' }}
+
+      # Recipient.
       EMAIL_TO: benleadbeatter2@hotmail.com
 
-      # Sender login comes from secure GitHub secrets.
+      # Secure sender credentials.
       EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
       EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
 
+      # Microsoft Outlook/Hotmail email server.
       SMTP_HOST: smtp-mail.outlook.com
       SMTP_PORT: "587"
 
