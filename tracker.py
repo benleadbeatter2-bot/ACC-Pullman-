@@ -15,7 +15,7 @@ from playwright.sync_api import (
 
 
 # ============================================================
-# HOTEL SETTINGS
+# HOTEL DETAILS
 # ============================================================
 
 HOTEL_NAME = "Pullman Khao Lak Resort"
@@ -32,15 +32,17 @@ RESULT_FILE = Path("price-result.json")
 
 
 # ============================================================
-# ENVIRONMENT VARIABLE HELPERS
+# ENVIRONMENT VARIABLES
 # ============================================================
 
-def environment_value(name: str, default: str) -> str:
+def get_environment_value(
+    name: str,
+    default: str,
+) -> str:
     """
-    Return an environment variable.
+    Return a GitHub environment variable.
 
-    If the variable is missing or blank, return the default.
-    This prevents blank GitHub variables from overriding defaults.
+    If it is missing or blank, return the default value.
     """
     value = os.environ.get(name, "").strip()
 
@@ -50,64 +52,77 @@ def environment_value(name: str, default: str) -> str:
     return default
 
 
-ACCOR_URL = environment_value(
+ACCOR_URL = get_environment_value(
     "ACCOR_URL",
     DEFAULT_ACCOR_URL,
 )
 
-CURRENCY = environment_value(
+CURRENCY = get_environment_value(
     "CURRENCY",
-    "AUD",
+    "THB",
 ).upper()
 
-EMAIL_MODE = environment_value(
-    "EMAIL_MODE",
-    "always",
-).lower()
-
-EMAIL_FROM = environment_value(
+EMAIL_FROM = get_environment_value(
     "EMAIL_FROM",
     "",
 )
 
-EMAIL_PASSWORD = environment_value(
+EMAIL_PASSWORD = get_environment_value(
     "EMAIL_PASSWORD",
     "",
 )
 
-SMTP_HOST = environment_value(
+SMTP_HOST = get_environment_value(
     "SMTP_HOST",
     "smtp-mail.outlook.com",
 )
 
 try:
     SMTP_PORT = int(
-        environment_value("SMTP_PORT", "587")
+        get_environment_value(
+            "SMTP_PORT",
+            "587",
+        )
     )
 except ValueError:
     SMTP_PORT = 587
 
 try:
-    TARGET_PRICE = float(
-        environment_value("TARGET_PRICE", "0")
+    MIN_PRICE = float(
+        get_environment_value(
+            "MIN_PRICE",
+            "1300",
+        )
     )
 except ValueError:
-    TARGET_PRICE = 0.0
+    MIN_PRICE = 1300.0
+
+try:
+    MAX_PRICE = float(
+        get_environment_value(
+            "MAX_PRICE",
+            "1400",
+        )
+    )
+except ValueError:
+    MAX_PRICE = 1400.0
 
 
 # ============================================================
-# PRICE EXTRACTION
+# PRICE PARSING
 # ============================================================
 
-def normalise_price(raw_value: str) -> Optional[float]:
+def normalise_price(
+    raw_value: str,
+) -> Optional[float]:
     """
-    Convert text such as:
-        A$245
-        AUD 245.50
-        THB 6,450
-        1.245,50 EUR
+    Convert displayed price text into a float.
 
-    into a float.
+    Examples:
+        THB 1,350
+        ฿1,399
+        AUD 245.50
+        1.245,50 EUR
     """
     cleaned = re.sub(
         r"[^\d,.]",
@@ -119,23 +134,23 @@ def normalise_price(raw_value: str) -> Optional[float]:
         return None
 
     if "," in cleaned and "." in cleaned:
-        # Example: 1.245,50
+        # European format: 1.245,50
         if cleaned.rfind(",") > cleaned.rfind("."):
             cleaned = cleaned.replace(".", "")
             cleaned = cleaned.replace(",", ".")
 
-        # Example: 1,245.50
+        # English format: 1,245.50
         else:
             cleaned = cleaned.replace(",", "")
 
     elif "," in cleaned:
         sections = cleaned.split(",")
 
-        # Example: 6,450
+        # Thousands separator: 1,350
         if len(sections[-1]) == 3:
             cleaned = cleaned.replace(",", "")
 
-        # Example: 245,50
+        # Decimal separator: 245,50
         else:
             cleaned = cleaned.replace(",", ".")
 
@@ -144,22 +159,24 @@ def normalise_price(raw_value: str) -> Optional[float]:
     except ValueError:
         return None
 
-    # Ignore numbers that are unlikely to be hotel prices.
+    # Exclude values unlikely to be room prices.
     if amount < 20 or amount > 1_000_000:
         return None
 
     return amount
 
 
-def currency_patterns(currency: str) -> list[str]:
-    known_patterns = {
-        "AUD": [
-            r"(?:A\$|AU\$|AUD)\s*([\d][\d\s,.]*)",
-            r"([\d][\d\s,.]*)\s*(?:AUD)",
-        ],
+def get_currency_patterns(
+    currency: str,
+) -> list[str]:
+    patterns = {
         "THB": [
             r"(?:THB|฿)\s*([\d][\d\s,.]*)",
             r"([\d][\d\s,.]*)\s*(?:THB|บาท)",
+        ],
+        "AUD": [
+            r"(?:A\$|AU\$|AUD)\s*([\d][\d\s,.]*)",
+            r"([\d][\d\s,.]*)\s*(?:AUD)",
         ],
         "USD": [
             r"(?:US\$|USD)\s*([\d][\d\s,.]*)",
@@ -175,8 +192,8 @@ def currency_patterns(currency: str) -> list[str]:
         ],
     }
 
-    if currency in known_patterns:
-        return known_patterns[currency]
+    if currency in patterns:
+        return patterns[currency]
 
     escaped_currency = re.escape(currency)
 
@@ -192,7 +209,7 @@ def extract_prices(
 ) -> list[float]:
     prices: list[float] = []
 
-    for pattern in currency_patterns(currency):
+    for pattern in get_currency_patterns(currency):
         matches = re.findall(
             pattern,
             page_text,
@@ -209,11 +226,11 @@ def extract_prices(
 
 
 # ============================================================
-# PAGE HANDLING
+# ACCOR PAGE HANDLING
 # ============================================================
 
 def dismiss_cookie_banner(page) -> None:
-    possible_button_names = [
+    possible_buttons = [
         "Accept all",
         "Accept All",
         "Accept cookies",
@@ -223,7 +240,7 @@ def dismiss_cookie_banner(page) -> None:
         "Continue without accepting",
     ]
 
-    for button_name in possible_button_names:
+    for button_name in possible_buttons:
         try:
             button = page.get_by_role(
                 "button",
@@ -237,7 +254,10 @@ def dismiss_cookie_banner(page) -> None:
                 button.count() > 0
                 and button.first.is_visible()
             ):
-                button.first.click(timeout=3_000)
+                button.first.click(
+                    timeout=3_000
+                )
+
                 page.wait_for_timeout(1_000)
                 return
 
@@ -245,16 +265,16 @@ def dismiss_cookie_banner(page) -> None:
             continue
 
 
-def check_accor_page() -> tuple[list[float], str]:
-    print(f"Opening Accor page: {ACCOR_URL}")
-
+def check_accor_prices() -> tuple[list[float], str]:
     if not ACCOR_URL.startswith(
         ("https://", "http://")
     ):
         raise ValueError(
-            "ACCOR_URL is not a valid web address. "
-            "It must start with https:// or http://"
+            "ACCOR_URL must start with "
+            "https:// or http://"
         )
+
+    print(f"Opening Accor URL: {ACCOR_URL}")
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
@@ -308,12 +328,12 @@ def check_accor_page() -> tuple[list[float], str]:
 
             except PlaywrightTimeoutError:
                 print(
-                    "The page remained active. "
-                    "Continuing with the check."
+                    "Page remained active. "
+                    "Continuing with the price check."
                 )
 
-            # Allow dynamic prices time to render.
-            page.wait_for_timeout(12_000)
+            # Allow dynamic room prices time to appear.
+            page.wait_for_timeout(15_000)
 
             page.screenshot(
                 path=str(SCREENSHOT_FILE),
@@ -324,14 +344,17 @@ def check_accor_page() -> tuple[list[float], str]:
 
             page_text = page.locator(
                 "body"
-            ).inner_text(timeout=30_000)
-
-            print(f"Page title: {page_title}")
+            ).inner_text(
+                timeout=30_000
+            )
 
             prices = extract_prices(
                 page_text,
                 CURRENCY,
             )
+
+            print(f"Page title: {page_title}")
+            print(f"Detected prices: {prices}")
 
             return prices, page_title
 
@@ -351,12 +374,12 @@ def send_email(
 ) -> None:
     if not EMAIL_FROM:
         raise RuntimeError(
-            "EMAIL_FROM secret is missing."
+            "EMAIL_FROM GitHub secret is missing."
         )
 
     if not EMAIL_PASSWORD:
         raise RuntimeError(
-            "EMAIL_PASSWORD secret is missing."
+            "EMAIL_PASSWORD GitHub secret is missing."
         )
 
     message = EmailMessage()
@@ -368,17 +391,18 @@ def send_email(
     message.set_content(body)
 
     if screenshot and screenshot.exists():
-        image_data = screenshot.read_bytes()
+        screenshot_data = screenshot.read_bytes()
 
         message.add_attachment(
-            image_data,
+            screenshot_data,
             maintype="image",
             subtype="png",
             filename=screenshot.name,
         )
 
     print(
-        f"Connecting to {SMTP_HOST}:{SMTP_PORT}"
+        f"Connecting to email server "
+        f"{SMTP_HOST}:{SMTP_PORT}"
     )
 
     with smtplib.SMTP(
@@ -401,7 +425,7 @@ def send_email(
 
 
 # ============================================================
-# GITHUB SUMMARY AND RESULT FILE
+# RESULT FILE
 # ============================================================
 
 def write_result_file(
@@ -422,7 +446,8 @@ def write_result_file(
         "successful": successful,
         "status": status,
         "currency": CURRENCY,
-        "target_price": TARGET_PRICE,
+        "minimum_price": MIN_PRICE,
+        "maximum_price": MAX_PRICE,
         "lowest_detected_price": (
             prices[0] if prices else None
         ),
@@ -434,10 +459,17 @@ def write_result_file(
     }
 
     RESULT_FILE.write_text(
-        json.dumps(result, indent=2),
+        json.dumps(
+            result,
+            indent=2,
+        ),
         encoding="utf-8",
     )
 
+
+# ============================================================
+# GITHUB ACTIONS SUMMARY
+# ============================================================
 
 def write_github_summary(
     status: str,
@@ -460,16 +492,25 @@ def write_github_summary(
         "",
         f"**Currency:** {CURRENCY}",
         "",
+        (
+            f"**Desired range:** "
+            f"{CURRENCY} {MIN_PRICE:,.2f} to "
+            f"{CURRENCY} {MAX_PRICE:,.2f}"
+        ),
+        "",
         f"**Email recipient:** {EMAIL_TO}",
         "",
     ]
 
     if prices:
+        lowest_price = prices[0]
+
         lines.extend(
             [
                 (
                     "**Lowest detected price:** "
-                    f"{CURRENCY} {prices[0]:,.2f}"
+                    f"{CURRENCY} "
+                    f"{lowest_price:,.2f}"
                 ),
                 "",
                 (
@@ -478,17 +519,6 @@ def write_github_summary(
                         f"{CURRENCY} {price:,.2f}"
                         for price in prices[:10]
                     )
-                ),
-                "",
-            ]
-        )
-
-    if TARGET_PRICE > 0:
-        lines.extend(
-            [
-                (
-                    "**Target price:** "
-                    f"{CURRENCY} {TARGET_PRICE:,.2f}"
                 ),
                 "",
             ]
@@ -513,56 +543,35 @@ def write_github_summary(
 # EMAIL CONTENT
 # ============================================================
 
-def create_price_email(
+def create_range_email(
+    lowest_price: float,
     prices: list[float],
 ) -> tuple[str, str]:
-    lowest_price = prices[0]
-
-    target_reached = (
-        TARGET_PRICE > 0
-        and lowest_price <= TARGET_PRICE
+    subject = (
+        "Pullman Khao Lak price in range – "
+        f"{CURRENCY} {lowest_price:,.2f}"
     )
-
-    if target_reached:
-        subject = (
-            "Pullman Khao Lak price alert – "
-            f"{CURRENCY} {lowest_price:,.2f}"
-        )
-    else:
-        subject = (
-            "Pullman Khao Lak price check – "
-            f"{CURRENCY} {lowest_price:,.2f}"
-        )
 
     body_lines = [
-        "Pullman Khao Lak Resort price check",
+        "Pullman Khao Lak Resort price alert",
         "",
         (
-            "Lowest price detected on the page: "
+            "The lowest detected price is within "
+            "your requested range."
+        ),
+        "",
+        (
+            "Lowest detected price: "
             f"{CURRENCY} {lowest_price:,.2f}"
         ),
+        (
+            "Requested range: "
+            f"{CURRENCY} {MIN_PRICE:,.2f} to "
+            f"{CURRENCY} {MAX_PRICE:,.2f}"
+        ),
+        "",
+        "Possible prices detected:",
     ]
-
-    if TARGET_PRICE > 0:
-        body_lines.extend(
-            [
-                (
-                    "Your target price: "
-                    f"{CURRENCY} {TARGET_PRICE:,.2f}"
-                ),
-                (
-                    "Target reached: "
-                    f"{'YES' if target_reached else 'NO'}"
-                ),
-            ]
-        )
-
-    body_lines.extend(
-        [
-            "",
-            "Possible prices detected:",
-        ]
-    )
 
     for price in prices[:10]:
         body_lines.append(
@@ -572,12 +581,12 @@ def create_price_email(
     body_lines.extend(
         [
             "",
-            "Check the current Accor rate here:",
+            "Check the current price here:",
             ACCOR_URL,
             "",
             (
-                "The Accor page screenshot from this "
-                "automated check is attached."
+                "A screenshot of the Accor page "
+                "is attached."
             ),
             "",
             (
@@ -591,20 +600,65 @@ def create_price_email(
     return subject, "\n".join(body_lines)
 
 
+def create_no_price_email(
+    page_title: str,
+) -> tuple[str, str]:
+    subject = (
+        "Pullman Khao Lak – no price detected"
+    )
+
+    body = (
+        "The Accor page opened, but the tracker "
+        f"could not detect any {CURRENCY} prices.\n\n"
+        "Possible reasons:\n"
+        "- The booking URL does not include dates.\n"
+        "- The hotel has no availability.\n"
+        "- Accor displayed a different currency.\n"
+        "- Accor changed the booking page.\n"
+        "- The automated browser was blocked.\n\n"
+        f"Page title:\n{page_title}\n\n"
+        f"Accor URL:\n{ACCOR_URL}\n\n"
+        "A screenshot is attached."
+    )
+
+    return subject, body
+
+
 # ============================================================
-# MAIN
+# MAIN PROGRAM
 # ============================================================
 
 def main() -> int:
     print(f"Hotel: {HOTEL_NAME}")
-    print(f"Accor URL: {ACCOR_URL}")
     print(f"Currency: {CURRENCY}")
-    print(f"Target price: {TARGET_PRICE}")
-    print(f"Email mode: {EMAIL_MODE}")
+
+    print(
+        "Desired range: "
+        f"{CURRENCY} {MIN_PRICE:,.2f} to "
+        f"{CURRENCY} {MAX_PRICE:,.2f}"
+    )
+
     print(f"Email recipient: {EMAIL_TO}")
 
+    if MIN_PRICE > MAX_PRICE:
+        print(
+            "Configuration error: MIN_PRICE is "
+            "higher than MAX_PRICE."
+        )
+
+        write_result_file(
+            successful=False,
+            status="Invalid price range",
+            error=(
+                "MIN_PRICE cannot be higher "
+                "than MAX_PRICE."
+            ),
+        )
+
+        return 1
+
     try:
-        prices, page_title = check_accor_page()
+        prices, page_title = check_accor_prices()
 
     except Exception as error:
         error_text = (
@@ -631,12 +685,11 @@ def main() -> int:
                     "Pullman Khao Lak price check failed"
                 ),
                 body=(
-                    "The Pullman Khao Lak automated price "
-                    "check failed.\n\n"
+                    "The automated Pullman Khao Lak "
+                    "price check failed.\n\n"
                     f"Error:\n{error_text}\n\n"
                     f"Accor URL:\n{ACCOR_URL}\n\n"
-                    "Open the GitHub Actions run for the "
-                    "complete log."
+                    "Open GitHub Actions for the full log."
                 ),
                 screenshot=SCREENSHOT_FILE,
             )
@@ -644,6 +697,7 @@ def main() -> int:
         except Exception as email_error:
             print(
                 "Failure email could not be sent: "
+                f"{type(email_error).__name__}: "
                 f"{email_error}"
             )
 
@@ -651,7 +705,7 @@ def main() -> int:
 
     if not prices:
         status = (
-            f"No {CURRENCY} prices were detected"
+            f"No {CURRENCY} prices detected"
         )
 
         print(status)
@@ -667,95 +721,106 @@ def main() -> int:
         )
 
         try:
-            send_email(
-                subject=(
-                    "Pullman Khao Lak – "
-                    "no price detected"
-                ),
-                body=(
-                    "The Accor page opened successfully, "
-                    f"but no {CURRENCY} room prices were "
-                    "detected.\n\n"
-                    "Possible reasons:\n"
-                    "- The URL does not contain booking dates.\n"
-                    "- The hotel has no availability.\n"
-                    "- Accor displayed another currency.\n"
-                    "- Accor changed the page layout.\n"
-                    "- Accor blocked the automated browser.\n\n"
-                    f"Page title:\n{page_title}\n\n"
-                    f"Accor URL:\n{ACCOR_URL}\n\n"
-                    "The screenshot is attached."
-                ),
-                screenshot=SCREENSHOT_FILE,
+            subject, body = create_no_price_email(
+                page_title
             )
 
-        except Exception as email_error:
-            print(
-                "Email could not be sent: "
-                f"{email_error}"
-            )
-
-        return 1
-
-    lowest_price = prices[0]
-
-    print(
-        "Lowest detected price: "
-        f"{CURRENCY} {lowest_price:,.2f}"
-    )
-
-    write_result_file(
-        successful=True,
-        status="Price detected",
-        prices=prices,
-        page_title=page_title,
-    )
-
-    should_email = True
-
-    if EMAIL_MODE == "target":
-        should_email = (
-            TARGET_PRICE > 0
-            and lowest_price <= TARGET_PRICE
-        )
-
-    if should_email:
-        subject, body = create_price_email(prices)
-
-        try:
             send_email(
                 subject=subject,
                 body=body,
                 screenshot=SCREENSHOT_FILE,
             )
 
-        except Exception as error:
+        except Exception as email_error:
             print(
-                "Price was detected, but the email failed: "
-                f"{error}"
+                "No-price email could not be sent: "
+                f"{type(email_error).__name__}: "
+                f"{email_error}"
             )
 
-            write_github_summary(
-                status="Price detected, but email failed",
+        # Mark the workflow successful because the
+        # tracker itself completed its check.
+        return 0
+
+    lowest_price = prices[0]
+
+    price_in_range = (
+        MIN_PRICE
+        <= lowest_price
+        <= MAX_PRICE
+    )
+
+    if price_in_range:
+        status = "Price is within requested range"
+
+        print(
+            "PRICE ALERT: "
+            f"{CURRENCY} {lowest_price:,.2f} "
+            "is within the requested range."
+        )
+
+        try:
+            subject, body = create_range_email(
+                lowest_price=lowest_price,
                 prices=prices,
             )
 
-            return 1
+            send_email(
+                subject=subject,
+                body=body,
+                screenshot=SCREENSHOT_FILE,
+            )
 
-        final_status = "Price detected and email sent"
+            status = (
+                "Price is within range and email sent"
+            )
+
+        except Exception as email_error:
+            print(
+                "Price was in range, but email failed: "
+                f"{type(email_error).__name__}: "
+                f"{email_error}"
+            )
+
+            status = (
+                "Price is within range, but email failed"
+            )
+
+    elif lowest_price < MIN_PRICE:
+        status = (
+            "Price is below requested range"
+        )
+
+        print(
+            f"Lowest price {CURRENCY} "
+            f"{lowest_price:,.2f} is below "
+            f"{CURRENCY} {MIN_PRICE:,.2f}."
+        )
+
+        print("No email sent.")
 
     else:
-        print(
-            "Price is above the target. "
-            "No email was required."
+        status = (
+            "Price is above requested range"
         )
 
-        final_status = (
-            "Price detected; target not reached"
+        print(
+            f"Lowest price {CURRENCY} "
+            f"{lowest_price:,.2f} is above "
+            f"{CURRENCY} {MAX_PRICE:,.2f}."
         )
+
+        print("No email sent.")
+
+    write_result_file(
+        successful=True,
+        status=status,
+        prices=prices,
+        page_title=page_title,
+    )
 
     write_github_summary(
-        status=final_status,
+        status=status,
         prices=prices,
     )
 
