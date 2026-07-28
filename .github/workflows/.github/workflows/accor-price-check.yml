@@ -1,27 +1,32 @@
-name: Check Pullman Khao Lak price
+name: Pullman Khao Lak price check
 
 on:
   workflow_dispatch:
 
   schedule:
-    # GitHub schedules use UTC.
-    # 00:15 UTC = 08:15 Perth time.
+    # 00:15 UTC is 08:15 Perth time.
     - cron: "15 0 * * *"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   check-price:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     env:
       ACCOR_URL: ${{ vars.ACCOR_URL }}
       TARGET_PRICE: ${{ vars.TARGET_PRICE }}
       CURRENCY: ${{ vars.CURRENCY }}
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      EMAIL_MODE: ${{ vars.EMAIL_MODE }}
+
+      EMAIL_TO: benleadbeatter2@hotmail.com
+      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+      EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+
+      SMTP_HOST: smtp-mail.outlook.com
+      SMTP_PORT: "587"
 
     steps:
       - name: Download repository
@@ -33,22 +38,31 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install Python packages
+      - name: Install Python requirements
         run: pip install -r requirements.txt
 
       - name: Install Chromium
         run: playwright install --with-deps chromium
 
-      - name: Check Accor price
+      - name: Restore previous price
+        uses: actions/cache@v4
+        with:
+          path: previous-price.json
+          key: pullman-khao-lak-price-${{ github.run_id }}
+          restore-keys: |
+            pullman-khao-lak-price-
+
+      - name: Check the Accor price
         run: python tracker.py
 
-      - name: Upload check results
+      - name: Upload price results and screenshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pullman-khao-lak-price-check
+          name: pullman-khao-lak-${{ github.run_number }}
           path: |
             accor-price-check.png
             price-result.json
+            previous-price.json
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 30
