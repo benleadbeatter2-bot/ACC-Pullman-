@@ -4,11 +4,12 @@ on:
   workflow_dispatch:
 
   schedule:
-    # 00:15 UTC is 08:15 Perth time.
+    # GitHub cron uses UTC.
+    # 00:15 UTC is 08:15 in Perth.
     - cron: "15 0 * * *"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   check-price:
@@ -16,12 +17,16 @@ jobs:
     timeout-minutes: 20
 
     env:
-      ACCOR_URL: ${{ vars.ACCOR_URL }}
-      TARGET_PRICE: ${{ vars.TARGET_PRICE }}
-      CURRENCY: ${{ vars.CURRENCY }}
-      EMAIL_MODE: ${{ vars.EMAIL_MODE }}
+      # Blank repository variables automatically use these defaults.
+      ACCOR_URL: ${{ vars.ACCOR_URL || 'https://all.accor.com/hotel/B436/index.en.shtml' }}
+      TARGET_PRICE: ${{ vars.TARGET_PRICE || '0' }}
+      CURRENCY: ${{ vars.CURRENCY || 'AUD' }}
+      EMAIL_MODE: ${{ vars.EMAIL_MODE || 'always' }}
 
+      # Recipient is fixed.
       EMAIL_TO: benleadbeatter2@hotmail.com
+
+      # Sender login comes from secure GitHub secrets.
       EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
       EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
 
@@ -38,24 +43,16 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install Python requirements
+      - name: Install Python packages
         run: pip install -r requirements.txt
 
       - name: Install Chromium
         run: playwright install --with-deps chromium
 
-      - name: Restore previous price
-        uses: actions/cache@v4
-        with:
-          path: previous-price.json
-          key: pullman-khao-lak-price-${{ github.run_id }}
-          restore-keys: |
-            pullman-khao-lak-price-
-
-      - name: Check the Accor price
+      - name: Check Accor price
         run: python tracker.py
 
-      - name: Upload price results and screenshot
+      - name: Upload screenshot and results
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -63,6 +60,5 @@ jobs:
           path: |
             accor-price-check.png
             price-result.json
-            previous-price.json
           if-no-files-found: ignore
           retention-days: 30
